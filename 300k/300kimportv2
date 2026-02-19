@@ -2,64 +2,57 @@ import serial
 import numpy as np
 import time
 
-# --- CONFIGURATION ---
 PORT = 'COM5'  
 FILENAME = "pole_test_data.npy"
-PACKET_SIZE = 8       # 4 x uint16
-SYNC_WORD = 0xABCD    # The 'padding' value from Teensy
-SAMPLE_RATE = 300000 
-DURATION = 2          
-TOTAL_SAMPLES = SAMPLE_RATE * DURATION
+PACKET_SIZE = 8       
+SYNC_WORD = 0xABCD    
+TOTAL_SAMPLES = 600000
 
 def run_collector():
     try:
-        ser = serial.Serial(PORT, 2000000, timeout=2)
+        ser = serial.Serial(PORT, 2000000, timeout=5)
         ser.set_buffer_size(rx_size=20_000_000)
         print(f"Waiting for START on {PORT}...")
 
         while True:
             line = ser.readline().decode(errors='ignore').strip()
             if "START" in line:
-                time.sleep(0.1) # Let the buffer stabilize
-                ser.reset_input_buffer() 
-                print(">>> Recording...")
+                print(">>> Recording 600,000 samples...")
                 break
         
-        # Read the raw bytes
-        bytes_to_read = TOTAL_SAMPLES * PACKET_SIZE
-        raw_data = ser.read(bytes_to_read)
+        # Calculate bytes to read
+        expected_bytes = TOTAL_SAMPLES * PACKET_SIZE
+        raw_data = b''
         
-        # Convert to uint16 array
+        # Read until we have the full dataset
+        while len(raw_data) < expected_bytes:
+            chunk = ser.read(expected_bytes - len(raw_data))
+            if not chunk: break
+            raw_data += chunk
+            print(f"Progress: {len(raw_data)/expected_bytes:.1%}", end='\r')
+
+        # Process data
         data_all = np.frombuffer(raw_data, dtype='<u2')
         
-        # --- SYNC LOGIC ---
-        # We expect SYNC_WORD at index 3, 7, 11, etc. (the 4th element of every packet)
-        # If it's not there, we shift the starting point until it aligns.
+        # Alignment Sync logic
         offset = 0
         for i in range(4):
-            if data_all[i] == SYNC_WORD:
-                offset = i - 3 # The sync word is the 4th element (index 3)
+            if i < len(data_all) and data_all[i] == SYNC_WORD:
+                # Sync word is the 4th element (index 3)
+                offset = (i - 3) % 4
                 break
         
-        # Apply offset and reshape
-        # We skip 'offset' elements to align, then truncate to a multiple of 4
         aligned_data = data_all[offset:]
         num_packets = len(aligned_data) // 4
-        final_matrix = aligned_data[:num_packets * 4].reshape(-1, 4)
+        matrix = aligned_data[:num_packets * 4].reshape(-1, 4)
 
-        # Check for data integrity
-        sync_errors = np.sum(final_matrix[:, 3] != SYNC_WORD)
-        if sync_errors > 0:
-            print(f"WARNING: {sync_errors} packets failed sync check!")
-
-        # Save only S1, S2, S3 (columns 0, 1, 2)
-        clean_data = final_matrix[:, :3]
+        # Final cleanup and save
+        clean_data = matrix[:TOTAL_SAMPLES, :3]
         np.save(FILENAME, clean_data)
-        
-        print(f"Saved {num_packets} samples. Shape: {clean_data.shape}")
+        print(f"\nSaved {len(clean_data)} samples to {FILENAME}")
 
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"\nERROR: {e}")
     finally:
         ser.close()
 
