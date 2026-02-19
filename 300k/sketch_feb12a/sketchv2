@@ -30,22 +30,28 @@ void captureISR() {
   adc->adc0->startSingleRead(A9);
   adc->adc1->startSingleRead(A2);
 
-  // 2. Wait for hardware (approx 1-1.5us at VERY_HIGH_SPEED)
+  // 2. Wait for first two to finish
   while(adc->adc0->isConverting() || adc->adc1->isConverting());
 
-  // Select the buffer currently being filled
   DataPacket* currentBuf = (activeBuffer == 0) ? buffer0 : buffer1;
-
-  // 3. Store first two results
+  
+  // Store results
   currentBuf[bufIndex].s1 = (uint16_t)adc->adc0->readSingle();
   currentBuf[bufIndex].s3 = (uint16_t)adc->adc1->readSingle();
 
-  // 4. Immediately start S2 on ADC0 (Sequential)
-  currentBuf[bufIndex].s2 = (uint16_t)adc->adc0->analogRead(A8);
+  // 3. Immediately start S2 on ADC0 while we do housekeeping
+  adc->adc0->startSingleRead(A8); 
   
+  // Hard-coded Sync Byte for Python alignment verification
+  currentBuf[bufIndex].padding = 0xABCD; 
+
+  // Wait for S2
+  while(adc->adc0->isConverting());
+  currentBuf[bufIndex].s2 = (uint16_t)adc->adc0->readSingle();
+
   bufIndex++;
 
-  // 5. Swap buffers if full
+  // 4. Buffer Swap Logic
   if (bufIndex >= BUFFER_SIZE) {
     bufIndex = 0;
     activeBuffer = !activeBuffer;
