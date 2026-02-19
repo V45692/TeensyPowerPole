@@ -1,0 +1,29 @@
+import numpy as np
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtWidgets
+
+def visualize_data(filename):
+    # Load the saved data
+    data = np.load(filename)
+    
+    # Create the Qt Application
+    app = QtWidgets.QApplication([])
+    win = pg.GraphicsLayoutWidget(show=True, title="Teensy ADC Analysis")
+    win.resize(1000, 600)
+    
+    p1 = win.addPlot(title="High Speed ADC Streams")
+    p1.addLegend()
+    
+    # Use different colors for the 3 sensors
+    p1.plot(data[:, 0], pen='r', name="Sensor 1 (A9)")
+    p1.plot(data[:, 1], pen='g', name="Sensor 2 (A8)")
+    p1.plot(data[:, 2], pen='b', name="Sensor 3 (A2)")
+    
+    p1.setLabel('left', 'ADC Value', units='10-bit')
+    p1.setLabel('bottom', 'Sample Index')
+    
+    print("Opening plot window...")
+    app.exec()
+
+if __name__ == "__main__":
+    visualize_data("pole_test_data.npy")
