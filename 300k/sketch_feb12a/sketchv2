@@ -1,0 +1,106 @@
+#include <ADC.h>
+
+// 8-byte packet for 32-bit alignment and easy Python parsing
+struct __attribute__((packed)) DataPacket {
+  uint16_t s1; 
+  uint16_t s2; 
+  uint16_t s3; 
+  uint16_t padding; // Useful for alignment or adding a sync byte (e.g., 0xFFFF)
+};
+
+// --- Buffer Configuration ---
+// Each buffer is 1000 samples * 8 bytes = 8KB. 
+// Teensy 4.1 has 512KB DTCM, so this is very safe.
+const int BUFFER_SIZE = 1000;
+DataPacket buffer0[BUFFER_SIZE];
+DataPacket buffer1[BUFFER_SIZE];
+
+ADC *adc = new ADC();
+IntervalTimer timer;
+
+volatile int bufIndex = 0;
+volatile bool activeBuffer = 0; // 0 uses buffer0, 1 uses buffer1
+volatile bool bufferReady = false; 
+volatile bool capturing = false;
+
+void captureISR() {
+  if (!capturing) return;
+
+  // 1. Start S1 (ADC0) and S3 (ADC1) simultaneously
+  adc->adc0->startSingleRead(A9);
+  adc->adc1->startSingleRead(A2);
+
+  // 2. Wait for hardware (approx 1-1.5us at VERY_HIGH_SPEED)
+  while(adc->adc0->isConverting() || adc->adc1->isConverting());
+
+  // Select the buffer currently being filled
+  DataPacket* currentBuf = (activeBuffer == 0) ? buffer0 : buffer1;
+
+  // 3. Store first two results
+  currentBuf[bufIndex].s1 = (uint16_t)adc->adc0->readSingle();
+  currentBuf[bufIndex].s3 = (uint16_t)adc->adc1->readSingle();
+
+  // 4. Immediately start S2 on ADC0 (Sequential)
+  currentBuf[bufIndex].s2 = (uint16_t)adc->adc0->analogRead(A8);
+  
+  bufIndex++;
+
+  // 5. Swap buffers if full
+  if (bufIndex >= BUFFER_SIZE) {
+    bufIndex = 0;
+    activeBuffer = !activeBuffer;
+    bufferReady = true; 
+  }
+}
+
+void setup() {
+  // Serial.begin(baud) doesn't matter on Teensy; it always runs at 480Mbps USB Speed
+  Serial.begin(115200); 
+  pinMode(2, INPUT_PULLUP); // Trigger Pin
+
+  // --- ADC0 Setup (S1, S2) ---
+  adc->adc0->setAveraging(0);
+  adc->adc0->setResolution(10);
+  adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::VERY_HIGH_SPEED);
+  adc->adc0->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
+
+  // --- ADC1 Setup (S3) ---
+  adc->adc1->setAveraging(0);
+  adc->adc1->setResolution(10);
+  adc->adc1->setConversionSpeed(ADC_CONVERSION_SPEED::VERY_HIGH_SPEED);
+  adc->adc1->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
+
+  Serial.println("System Ready. Pull Pin 2 to GND to start.");
+}
+
+void loop() {
+  // Check for trigger
+  if (digitalRead(2) == LOW && !capturing) {
+    delay(10); // Debounce
+    Serial.println("START");
+    bufIndex = 0;
+    bufferReady = false;
+    capturing = true;
+    
+    // Start the timer: 3.33 microseconds = 300,003 Hz
+    timer.begin(captureISR, 3.33);
+  }
+
+  // High-priority: If a buffer is full, ship it to Python immediately
+  if (bufferReady) {
+    bufferReady = false;
+    // Send the buffer that IS NOT currently being filled by the ISR
+    void* dataToSend = (activeBuffer == 1) ? buffer0 : buffer1;
+    Serial.write((uint8_t*)dataToSend, BUFFER_SIZE * sizeof(DataPacket));
+  }
+
+  // Stop recording after 2 seconds (600,000 samples)
+  // We use a counter or a simple timer check
+  static elapsedMillis durationTimer;
+  if (capturing && durationTimer > 2000) {
+    timer.end();
+    capturing = false;
+    durationTimer = 0;
+    Serial.println("STOP");
+  }
+}
