@@ -1,49 +1,67 @@
 import serial
 import numpy as np
+import time
 
 # --- CONFIGURATION ---
-PORT = 'COM5'  # <--- DOUBLE CHECK THIS in Arduino IDE (Tools > Port)
+PORT = 'COM5'  
 FILENAME = "pole_test_data.npy"
-PACKET_SIZE = 8  # Our struct: s1(2), s2(2), s3(2), padding(2)
+PACKET_SIZE = 8       # 4 x uint16
+SYNC_WORD = 0xABCD    # The 'padding' value from Teensy
 SAMPLE_RATE = 300000 
-DURATION = 2     # Seconds to record
+DURATION = 2          
 TOTAL_SAMPLES = SAMPLE_RATE * DURATION
 
 def run_collector():
     try:
-        ser = serial.Serial(PORT, 2000000, timeout=2) # Higher timeout for safety
+        ser = serial.Serial(PORT, 2000000, timeout=2)
         ser.set_buffer_size(rx_size=20_000_000)
         print(f"Waiting for START on {PORT}...")
 
         while True:
             line = ser.readline().decode(errors='ignore').strip()
             if "START" in line:
-                # IMPORTANT: Clear any lingering text or partial packets
+                time.sleep(0.1) # Let the buffer stabilize
                 ser.reset_input_buffer() 
-                print(">>> START Signal Received! Recording...")
+                print(">>> Recording...")
                 break
         
-        # Read the blob
+        # Read the raw bytes
         bytes_to_read = TOTAL_SAMPLES * PACKET_SIZE
-        # Use a loop or a large read to ensure we get exactly what we need
         raw_data = ser.read(bytes_to_read)
         
-        print(f"Captured {len(raw_data)} bytes.")
+        # Convert to uint16 array
+        data_all = np.frombuffer(raw_data, dtype='<u2')
+        
+        # --- SYNC LOGIC ---
+        # We expect SYNC_WORD at index 3, 7, 11, etc. (the 4th element of every packet)
+        # If it's not there, we shift the starting point until it aligns.
+        offset = 0
+        for i in range(4):
+            if data_all[i] == SYNC_WORD:
+                offset = i - 3 # The sync word is the 4th element (index 3)
+                break
+        
+        # Apply offset and reshape
+        # We skip 'offset' elements to align, then truncate to a multiple of 4
+        aligned_data = data_all[offset:]
+        num_packets = len(aligned_data) // 4
+        final_matrix = aligned_data[:num_packets * 4].reshape(-1, 4)
 
-        # Convert using Little-Endian explicitly
-        num_complete_packets = len(raw_data) // PACKET_SIZE
-        trimmed_data = raw_data[:num_complete_packets * PACKET_SIZE]
-        
-        # Interpret as Little-Endian uint16 (Teensy native)
-        data = np.frombuffer(trimmed_data, dtype='<u2').reshape(-1, 4)
-        
-        # s1=col 0, s2=col 1, s3=col 2
-        clean_data = data[:, :3]
-        
+        # Check for data integrity
+        sync_errors = np.sum(final_matrix[:, 3] != SYNC_WORD)
+        if sync_errors > 0:
+            print(f"WARNING: {sync_errors} packets failed sync check!")
+
+        # Save only S1, S2, S3 (columns 0, 1, 2)
+        clean_data = final_matrix[:, :3]
         np.save(FILENAME, clean_data)
-        print(f"Saved {num_complete_packets} samples. Shape: {clean_data.shape}")
+        
+        print(f"Saved {num_packets} samples. Shape: {clean_data.shape}")
 
     except Exception as e:
         print(f"ERROR: {e}")
     finally:
         ser.close()
+
+if __name__ == "__main__":
+    run_collector()
