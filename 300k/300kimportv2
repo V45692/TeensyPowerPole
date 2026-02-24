@@ -1,13 +1,49 @@
 import serial
 import numpy as np
 import time
+from datetime import datetime
+import os
+import functools
 
 PORT = 'COM5'  
-FILENAME = "pole_test_data.npy"
 PACKET_SIZE = 8       
 SYNC_WORD = 0xABCD    
 TOTAL_SAMPLES = 600000
 
+def save_output(prefix="pole_test", folder="recordings"):
+    """
+    Decorator that automatically saves a function's return value 
+    as a .npy file with a UTC timestamp.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # 1. Run the function to get the data
+            data = func(*args, **kwargs)
+            
+            # 2. Ensure the output folder exists
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+            
+            # 3. Create a unique UTC timestamp (YearMonthDay_HourMinSec_Microseconds)
+            # The 'Z' stands for Zulu (UTC) time.
+            now_utc = datetime.now(timezone.utc)
+            timestamp = now_utc.strftime("%Y%m%dT%H%M%S_%f") + "Z"
+            
+            filename = os.path.join(folder, f"{prefix}_{timestamp}.npy")
+            
+            # 4. Save the data safely
+            try:
+                np.save(filename, data)
+                print(f"--- [AUTO-SAVE] Data captured to: {filename} ---")
+            except Exception as e:
+                print(f"--- [ERROR] Could not save data: {e} ---")
+            
+            return data
+        return wrapper
+    return decorator
+
+@save_output(prefix="pole_test_run", folder="experiment_data")
 def run_collector():
     try:
         ser = serial.Serial(PORT, 2000000, timeout=5)
@@ -46,10 +82,9 @@ def run_collector():
         num_packets = len(aligned_data) // 4
         matrix = aligned_data[:num_packets * 4].reshape(-1, 4)
 
-        # Final cleanup and save
+        # Final cleanup and return clean data (strip padding)
         clean_data = matrix[:TOTAL_SAMPLES, :3]
-        np.save(FILENAME, clean_data)
-        print(f"\nSaved {len(clean_data)} samples to {FILENAME}")
+        return clean_data
 
     except Exception as e:
         print(f"\nERROR: {e}")
