@@ -79,7 +79,7 @@ void setup() {
 }
 
 void loop() {
-  if (digitalRead(2) == LOW && !capturing) {
+  if (digitalRead(2) == High && !capturing) {
     delay(100); 
     totalSamples = 0;
     bufIndex = 0;
