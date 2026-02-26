@@ -22,6 +22,7 @@ volatile bool bufferReady = false;
 volatile bool capturing = false;
 volatile uint32_t totalSamples = 0;
 const uint32_t LIMIT = 600000;
+bool lastButtonState = HIGH;
 
 void captureISR() {
   if (!capturing) return;
@@ -79,7 +80,8 @@ void setup() {
 }
 
 void loop() {
-  if (digitalRead(2) == High && !capturing) {
+  bool currentButtonState = digitalRead(2);
+  if (currentButtonState == HIGH && lastButtonState == LOW && !capturing) {
     delay(100); 
     totalSamples = 0;
     bufIndex = 0;
@@ -87,7 +89,7 @@ void loop() {
     Serial.println("START");
     timer.begin(captureISR, 3.3333); // 300,003 Hz
   }
-
+  lastButtonState = currentButtonState;
   if (bufferReady) {
     bufferReady = false;
     void* dataToSend = (activeBuffer == 1) ? buffer0 : buffer1;
