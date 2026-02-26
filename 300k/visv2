@@ -1,29 +1,51 @@
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets
+import sys
+import os
+
+def get_file_path():
+    """Opens a native file dialog to select the .npy file."""
+    # We need a temporary app instance to open the dialog
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    
+    file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        None, 
+        "Select ADC Data File", 
+        "", 
+        "NumPy Files (*.npy);;All Files (*)"
+    )
+    return file_path
 
 def visualize_data(filename):
-    # Load the saved data
+    if not filename or not os.path.exists(filename):
+        print("No valid file selected. Exiting...")
+        return
+
     data = np.load(filename)
     
-    # Create the Qt Application
-    app = QtWidgets.QApplication([])
-    win = pg.GraphicsLayoutWidget(show=True, title="Teensy ADC Analysis")
+    # If the app wasn't already running from the file picker
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    
+    win = pg.GraphicsLayoutWidget(show=True, title=f"Analysis: {os.path.basename(filename)}")
     win.resize(1000, 600)
     
     p1 = win.addPlot(title="High Speed ADC Streams")
     p1.addLegend()
     
-    # Use different colors for the 3 sensors
-    p1.plot(data[:, 0], pen='r', name="Sensor 1 (A9)")
-    p1.plot(data[:, 1], pen='g', name="Sensor 2 (A8)")
-    p1.plot(data[:, 2], pen='b', name="Sensor 3 (A2)")
+    # Plotting Logic
+    colors = ['r', 'g', 'b']
+    names = ["Sensor 1 (A9)", "Sensor 2 (A8)", "Sensor 3 (A2)"]
+    
+    for i in range(min(data.shape[1], 3)):
+        p1.plot(data[:, i], pen=colors[i], name=names[i])
     
     p1.setLabel('left', 'ADC Value', units='10-bit')
     p1.setLabel('bottom', 'Sample Index')
     
-    print("Opening plot window...")
+    print(f"Displaying data from: {filename}")
     app.exec()
 
 if __name__ == "__main__":
-    visualize_data("pole_test_data.npy")
+    selected_file = get_file_path()
+    visualize_data(selected_file)
