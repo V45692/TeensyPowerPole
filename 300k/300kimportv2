@@ -47,7 +47,10 @@ def save_output(prefix="pole_test", folder="recordings"):
 def run_collector():
     try:
         ser = serial.Serial(PORT, 2000000, timeout=5)
-        ser.set_buffer_size(rx_size=20_000_000)
+`       # Only set buffer size if os is windows
+        # Mac handles this dynamicaly works currently but may cause problems if more buffer is needed
+        if os.name = 'nt'
+            ser.set_buffer_size(rx_size=20_000_000)
         print(f"Waiting for START on {PORT}...")
 
         while True:
